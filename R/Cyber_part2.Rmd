@@ -1,0 +1,19 @@
+---
+title: "Cyber_part2"
+output: html_document
+date: "2023-11-08"
+---
+
+```{r}
+## set your working directory
+# setwd("~/Desktop/Year_2_Sem_1/SDS625/Case Studies/425-625-Fall-2023-main/cyber/R")
+```
+
+
+## Data Exploration - read the file
+```{r}
+
+cve_exploits <- readRDS("../data/cve.with.exploits.rds")
+
+```
+

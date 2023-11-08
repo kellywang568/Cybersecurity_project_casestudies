@@ -1,0 +1,209 @@
+---
+title: "Cybersecurity case study, Part 2"
+author: "425/625"
+date: "2023-11-06"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+#loading libraries
+library(dplyr)
+library(ggplot2)
+library(glmnet)
+
+```
+
+In part 1 you extract data about vulnerabilities and whether or not they have been exploited. Suppose your supervisor has never seen the data and wants you to give a brief summary of relationships among the vulnerability characteristics and whether or not they have been exploited. Your supervisor needs a quick summary for a meeting this afternoon. Perform some data exploration and analysis to help your supervisor understand the data and prepare for the meeting. 
+
+## Deliverables
+
+Upload a PDF to Gradescope. Include a bullet-point summary at the top of the PDF that summarizes your main takeaways.  Including supporting code and results below that. 
+
+
+```{r}
+## set your working directory
+# setwd("~/Desktop/Year_2_Sem_1/SDS625/Case Studies/425-625-Fall-2023-main/cyber/R")
+```
+
+
+## Data Exploration - read the file
+```{r}
+
+cve_exploits <- readRDS("../data/cve.with.exploits.rds")
+head(cve_exploits)
+str(cve_exploits)
+```
+
+## Explaining the concept behind this:
+
+*1.The Base Score in CVSS represents the  severity of a vulnerability based on its original characteristics. It provides a numerical value that indicates the potential impact and exploitability of a vulnerability. The Base Score is independent of any specific environment and reflects the vulnerability's worst-case scenario.*
+*2. Impact score allows you to find the highly-exploitable CVEs with the biggest impact on your company's Risk Index. *
+*3. The exploitability score represents how easily the vulnerability is accessed by intruder, the complexity of the attack, and the number of times an attacker must authenticate to successfully exploit a vulnerability.*
+*Lower base scores indicate less severe vulnerabilities, lower impact scores have less significant impact on security, lower exploitability score means it's harder for attacker to exploit the data. Hence we want vulnerabilities with lower scores in all categories.*
+
+### Create summary
+
+```{r}
+#colnames(cve_exploits)
+
+summary_exploited <- cve_exploits %>%
+  group_by(exploited) %>%
+  summarise(
+    avg_baseScore = mean(baseScore, na.rm = TRUE),
+    avg_impactScore = mean(impactScore, na.rm = TRUE),
+    avg_exploitabilityScore = mean(exploitabilityScore, na.rm = TRUE)
+  )
+
+
+summary_exploited
+summary_exploited_df <- as.data.frame(summary_exploited)
+
+```
+
+```{r}
+
+# Create a barplot
+barplot(
+  t(summary_exploited_df[, -1]),  # Transpose the data, excluding the 'exploited' column
+  beside = TRUE, # side by side
+  col = c("lightgreen", "lightblue", "pink"), 
+  names.arg = summary_exploited_df$exploited,  
+  xlab = "Exploited",
+  ylab = "Average Scores",
+  main = "Comparison of Average Scores by Exploited Status",
+  legend.text = rownames(t(summary_exploited_df[, -1]))
+)
+
+avg_basescore_diff <- summary_exploited_df$avg_baseScore[2] - summary_exploited_df$avg_baseScore[1]
+avg_impactscore_diff <- summary_exploited_df$avg_impactScore[2] - summary_exploited_df$avg_impactScore[1]
+avg_explotabilityscore_diff <- summary_exploited_df$avg_exploitabilityScore[2] - summary_exploited_df$avg_exploitabilityScore[1]
+
+
+avg_basescore_diff
+avg_impactscore_diff
+avg_explotabilityscore_diff
+```
+
+We notice and confirm the following:
+* Generally the scores for base, impact, and exploitability are lower when said ID is not exploited
+* This is a general correlation to keep in mind- the lower the score, the less likely it will be exploited
+
+Here are the differences amongst the type of scores:
+1. base score-  1.085072
+2. impact score- 0.8540082
+3. exploitability score- 0.2684032
+
+
+
+### Studying the number of exploited vs not-exploited ID's
+
+```{r}
+fraction_exploited <- cve_exploits %>% 
+  summarize(Fraction_Exploited = mean(exploited)) 
+
+fraction_exploited
+
+```
+* Note: Only 0.625% of the ID's are exploited
+* In the graph below, let's try to visualize the number of exploited vs non-exploited data and let's normalize it since such a small portion of the data is exploited anyways. 
+
+```{r fig.center = TRUE}
+
+# Create a barplot to visualize the relationship
+ggplot(cve_exploits, aes(x = privilegesRequired, fill = factor(exploited))) +
+  geom_bar(position = "dodge") +
+  labs(
+    x = "Privileges Required",
+    y = "Count",
+    fill = "Exploited"
+  ) +
+  ggtitle("Relationship Between Privileges Required and Exploited") +
+  theme_minimal()
+
+```
+
+Now let's log normalize so we can better see the comparisons:
+
+```{r fig.center = TRUE}
+
+
+# Create a barplot to visualize the relationship with log-transformed counts
+ggplot(cve_exploits, aes(x = privilegesRequired, fill = factor(exploited))) +
+  geom_bar(position = "dodge") +
+  labs(
+    x = "Privileges Required",
+    y = "Count (log scale)",
+    fill = "Exploited"
+  ) +
+  ggtitle("Relationship Between Privileges Required and Exploited") +
+  theme_minimal() +
+  scale_y_log10()  # Apply log scale to the y-axis
+
+```
+
+```{r}
+
+exploited_fraction <- cve_exploits %>%
+  group_by(privilegesRequired) %>%
+  summarize(exploited_fraction = mean(exploited)) %>%
+  arrange(desc(exploited_fraction))
+
+exploited_fraction
+
+```
+
+We see that overall, most of the vulnerabilities happen to have no privileges. In fact the total priviledges are in descending order from no privileges to low privileges to high privileges. However, the lowest portion of exploited data is with the category of high privileges with 0.28% after the log scale normalization and the highest portion of exploited data is with no priviledges with 0.72%
+It's a slight increase- so that may be interesting for the company to conduct a risk analysis. 
+
+
+## Creating a model
+
+### Let's try creating a regression:
+
+```{r}
+# Select the columns to include as predictors (independent variables)
+selected_columns <- c(
+  "baseScore", "impactScore", "exploitabilityScore"
+)
+
+# Create a new dataframe with selected columns and prepare for modellign
+selected_data <- cve_exploits %>% select(exploited, all_of(selected_columns))
+selected_data <- selected_data %>%
+  mutate_if(is.factor, as.integer)
+
+# Split the data into training and testing sets
+set.seed(123)  # For reproducibility
+train_indices <- sample(1:nrow(selected_data), 0.7 * nrow(selected_data))
+train_data <- selected_data[train_indices, ]
+test_data <- selected_data[-train_indices, ]
+
+# Create the regression model
+model <- glm(exploited ~ ., data = train_data, family = binomial)
+model
+predictions <- predict(model, newdata = test_data, type = "response")
+
+# Convert predicted probabilities to binary (0 or 1)
+predicted_labels <- ifelse(predictions >= 0.5, 1, 0)
+
+# Evaluate the model's performance
+accuracy <- mean(predicted_labels == test_data$exploited)
+cat("Accuracy on the test set:", accuracy, "\n")
+
+```
+
+#### Analysis 
+
+**Base Score**: This coefficient is 0.2009. For every unit increase in the Base Score, the predicted probability of a vulnerability being exploited increases by 0.2009 units. 
+**Impact Score**: This coefficient is 0.2809.For every unit increase in the Impact Score, the predicted probability of exploitation goes up by 0.2809 units. 
+**Exploitability Score**: This coefficient is 0.1234. If the Exploitability Score goes up by one unit, the predicted probability of exploitation increases by 0.1234 units.
+
+As the any of these scores goes up, the risk of exploitation also goes up by their corresponding values, meaning higher risk and vulnerability. 
+This is also a strong model since our accuracy on the test set is: 99%. 
+
+
+Feel free to follow up if you have any questions regarding the analysis. 
