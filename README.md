@@ -45,3 +45,10 @@ Deliverables
 a column in the CVE data.
 3. create.exploited.column.r. Code that adds a column exploited to the CVE data indicating
 whether or not the vulnerability has been exploited.
+
+
+
+################### PART 2 ####################################
+
+In part 1 we extract data about vulnerabilities and whether or not they have been exploited. Suppose our supervisor has never seen the data and wants you to give a brief summary of relationships among the vulnerability characteristics and whether or not they have been exploited. The supervisor needs a quick summary for a meeting this afternoon. Perform some data exploration and analysis to help the supervisor understand the data and prepare for the meeting. 
+
